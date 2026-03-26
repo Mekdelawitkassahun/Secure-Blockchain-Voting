@@ -2,24 +2,13 @@
 pragma solidity ^0.8.19;
 
 /**
- * @title Blockchain Voting System
+ * @title UniVote - Student Government Election System
  * @author Your Name
- * @notice A secure, transparent, and tamper-proof voting system with secret ballots
- * @dev Implements commit-reveal pattern for voter privacy
+ * @notice A decentralized voting system for university student representative elections
  */
-contract Voting {
-    // ============ STRUCTS ============
+contract UniVote {
+    // ============ DATA STRUCTURES ============
     
-    /**
-     * @dev Candidate structure with complete campaign information
-     * @param id Unique identifier for the candidate
-     * @param name Candidate's full name
-     * @param slogan Campaign slogan/tagline
-     * @param manifesto Detailed campaign platform
-     * @param promises Key promises (pipe-separated for frontend parsing)
-     * @param color Hex color code for UI branding
-     * @param voteCount Total number of votes received
-     */
     struct Candidate {
         uint256 id;
         string name;
@@ -30,129 +19,83 @@ contract Voting {
         uint256 voteCount;
     }
     
-    /**
-     * @dev Vote commitment structure for secret ballot
-     * @param hash keccak256(candidateId + secret)
-     * @param timestamp When the commitment was made
-     * @param revealed Whether the vote has been revealed
-     */
-    struct Commitment {
-        bytes32 hash;
-        uint256 timestamp;
+    struct VoteCommitment {
+        bytes32 commitHash;
         bool revealed;
+        uint256 timestamp;
     }
     
     // ============ STATE VARIABLES ============
     
-    /// @notice Contract administrator (deployer)
+    enum Phase { REGISTRATION, VOTING, REVEAL, ENDED }
+    Phase public currentPhase;
+    
     address public admin;
     
-    /// @notice Election phases
-    enum Phase { REGISTRATION, VOTING, REVEAL, ENDED }
-    Phase public phase;
-    
-    /// @notice Phase timestamps (Unix time in seconds)
     uint256 public registrationEndTime;
     uint256 public votingEndTime;
     uint256 public revealEndTime;
     
-    /// @notice Voter registration
     mapping(address => bool) public isRegistered;
     address[] public registeredVoters;
-    uint256 public registeredCount;
+    uint256 public totalRegistered;
     
-    /// @notice Vote tracking
-    mapping(address => Commitment) public commitments;
+    mapping(address => VoteCommitment) public votes;
     mapping(address => bool) public hasRevealed;
     
-    /// @notice Candidates
     Candidate[] public candidates;
-    mapping(uint256 => bool) private candidateExists;
-    
-    /// @notice Emergency controls
-    bool public paused;
     
     // ============ EVENTS ============
     
-    /// @notice Emitted when a new voter is registered
-    event VoterRegistered(address indexed voter);
-    
-    /// @notice Emitted when a vote is committed
-    event VoteCommitted(address indexed voter, bytes32 commitHash);
-    
-    /// @notice Emitted when a vote is revealed
-    event VoteRevealed(address indexed voter, uint256 candidateId);
-    
-    /// @notice Emitted when the election phase changes
-    event PhaseChanged(Phase newPhase);
-    
-    /// @notice Emitted when contract is paused or unpaused
-    event ContractPaused(bool paused);
-    
-    /// @notice Emitted when admin is transferred
-    event AdminTransferred(address indexed oldAdmin, address indexed newAdmin);
+    event VoterRegistered(address indexed voter, uint256 timestamp);
+    event VoteCommitted(address indexed voter, bytes32 commitHash, uint256 timestamp);
+    event VoteRevealed(address indexed voter, uint256 candidateId, uint256 timestamp);
+    event PhaseAdvanced(uint256 oldPhase, uint256 newPhase, uint256 timestamp);
+    event ElectionReset(uint256 timestamp);
     
     // ============ MODIFIERS ============
     
-    /// @dev Restrict access to admin only
     modifier onlyAdmin() {
-        require(msg.sender == admin, "Not admin");
+        require(msg.sender == admin, "Only admin can call this");
         _;
     }
     
-    /// @dev Prevent execution when contract is paused
-    modifier notPaused() {
-        require(!paused, "Contract paused");
-        _;
-    }
-    
-    /// @dev Require specific election phase
     modifier inPhase(Phase _phase) {
-        require(phase == _phase, "Wrong phase");
+        require(currentPhase == _phase, getPhaseErrorMessage());
+        _;
+    }
+    
+    modifier notEnded() {
+        require(currentPhase != Phase.ENDED, "Election has ended");
         _;
     }
     
     // ============ CONSTRUCTOR ============
     
-    /**
-     * @dev Deploy the voting contract with candidates and campaign details
-     * @param _names Array of candidate names
-     * @param _slogans Array of campaign slogans
-     * @param _manifestos Array of detailed manifestos
-     * @param _promises Array of pipe-separated key promises
-     * @param _colors Array of hex color codes for UI
-     * @param _registrationDurationMinutes Duration of registration phase in minutes
-     * @param _votingDurationMinutes Duration of voting phase in minutes
-     * @param _revealDurationMinutes Duration of reveal phase in minutes
-     */
     constructor(
         string[] memory _names,
         string[] memory _slogans,
         string[] memory _manifestos,
         string[] memory _promises,
         string[] memory _colors,
-        uint256 _registrationDurationMinutes,
-        uint256 _votingDurationMinutes,
-        uint256 _revealDurationMinutes
+        uint256 _registrationMinutes,
+        uint256 _votingMinutes,
+        uint256 _revealMinutes
     ) {
-        // Validate input arrays
-        require(_names.length == _slogans.length, "Array length mismatch: slogans");
-        require(_names.length == _manifestos.length, "Array length mismatch: manifestos");
-        require(_names.length == _promises.length, "Array length mismatch: promises");
-        require(_names.length == _colors.length, "Array length mismatch: colors");
-        require(_names.length > 0, "At least one candidate required");
+        require(_names.length == 6, "Must have exactly 6 candidates");
+        require(_names.length == _slogans.length, "Names and slogans length mismatch");
+        require(_names.length == _manifestos.length, "Names and manifestos length mismatch");
+        require(_names.length == _promises.length, "Names and promises length mismatch");
+        require(_names.length == _colors.length, "Names and colors length mismatch");
         
         admin = msg.sender;
         
-        // Set phase timestamps
-        registrationEndTime = block.timestamp + (_registrationDurationMinutes * 1 minutes);
-        votingEndTime = registrationEndTime + (_votingDurationMinutes * 1 minutes);
-        revealEndTime = votingEndTime + (_revealDurationMinutes * 1 minutes);
+        registrationEndTime = block.timestamp + (_registrationMinutes * 60);
+        votingEndTime = registrationEndTime + (_votingMinutes * 60);
+        revealEndTime = votingEndTime + (_revealMinutes * 60);
         
-        phase = Phase.REGISTRATION;
-        paused = false;
+        currentPhase = Phase.REGISTRATION;
         
-        // Add candidates with campaign details
         for (uint256 i = 0; i < _names.length; i++) {
             candidates.push(Candidate({
                 id: i,
@@ -163,177 +106,165 @@ contract Voting {
                 color: _colors[i],
                 voteCount: 0
             }));
-            candidateExists[i] = true;
         }
+    }
+    
+    // ============ HELPER FUNCTIONS ============
+    
+    /**
+     * @dev Get error message based on current phase
+     */
+    function getPhaseErrorMessage() private view returns (string memory) {
+        if (currentPhase == Phase.REGISTRATION) return "Must be in Registration phase";
+        if (currentPhase == Phase.VOTING) return "Must be in Voting phase";
+        if (currentPhase == Phase.REVEAL) return "Must be in Reveal phase";
+        return "Election has ended";
+    }
+    
+    // ============ REGISTRATION PHASE ============
+    
+    function register() external notEnded inPhase(Phase.REGISTRATION) {
+        require(!isRegistered[msg.sender], "Already registered");
+        require(block.timestamp < registrationEndTime, "Registration period ended");
+        
+        isRegistered[msg.sender] = true;
+        registeredVoters.push(msg.sender);
+        totalRegistered++;
+        
+        emit VoterRegistered(msg.sender, block.timestamp);
+    }
+    
+    // ============ VOTING PHASE ============
+    
+    function commitVote(bytes32 _commitHash) external notEnded inPhase(Phase.VOTING) {
+        require(isRegistered[msg.sender], "Not registered to vote");
+        require(votes[msg.sender].commitHash == 0, "Already committed a vote");
+        require(block.timestamp < votingEndTime, "Voting period ended");
+        require(_commitHash != bytes32(0), "Invalid commit hash");
+        
+        votes[msg.sender] = VoteCommitment({
+            commitHash: _commitHash,
+            revealed: false,
+            timestamp: block.timestamp
+        });
+        
+        emit VoteCommitted(msg.sender, _commitHash, block.timestamp);
+    }
+    
+    // ============ REVEAL PHASE ============
+    
+    function revealVote(uint256 _candidateId, string memory _secret) external notEnded inPhase(Phase.REVEAL) {
+        require(isRegistered[msg.sender], "Not registered to vote");
+        require(!hasRevealed[msg.sender], "Vote already revealed");
+        require(votes[msg.sender].commitHash != 0, "No vote commitment found");
+        require(block.timestamp < revealEndTime, "Reveal period ended");
+        require(_candidateId < candidates.length, "Invalid candidate ID");
+        
+        bytes32 expectedHash = keccak256(abi.encodePacked(_candidateId, _secret));
+        require(votes[msg.sender].commitHash == expectedHash, "Invalid secret code");
+        
+        hasRevealed[msg.sender] = true;
+        votes[msg.sender].revealed = true;
+        candidates[_candidateId].voteCount++;
+        
+        emit VoteRevealed(msg.sender, _candidateId, block.timestamp);
     }
     
     // ============ ADMIN FUNCTIONS ============
     
-    /**
-     * @dev Register multiple voters (admin only)
-     * @param _voters Array of wallet addresses to register
-     */
-    function registerVoters(address[] calldata _voters) 
-        external 
-        onlyAdmin 
-        notPaused 
-        inPhase(Phase.REGISTRATION) 
-    {
-        for (uint256 i = 0; i < _voters.length; i++) {
-            address voter = _voters[i];
-            if (!isRegistered[voter]) {
-                isRegistered[voter] = true;
-                registeredVoters.push(voter);
-                registeredCount++;
-                emit VoterRegistered(voter);
-            }
-        }
-    }
-    
-    /**
-     * @dev Advance to the next election phase (admin only)
-     * Can only be called after current phase duration has elapsed
-     */
     function advancePhase() external onlyAdmin {
-        if (phase == Phase.REGISTRATION) {
-            require(block.timestamp >= registrationEndTime, "Registration phase not ended");
-            phase = Phase.VOTING;
-            emit PhaseChanged(Phase.VOTING);
-        } 
-        else if (phase == Phase.VOTING) {
-            require(block.timestamp >= votingEndTime, "Voting phase not ended");
-            phase = Phase.REVEAL;
-            emit PhaseChanged(Phase.REVEAL);
-        } 
-        else if (phase == Phase.REVEAL) {
-            require(block.timestamp >= revealEndTime, "Reveal phase not ended");
-            phase = Phase.ENDED;
-            emit PhaseChanged(Phase.ENDED);
+        uint256 oldPhase = uint256(currentPhase);
+        
+        if (currentPhase == Phase.REGISTRATION) {
+            require(block.timestamp >= registrationEndTime, "Registration time not ended");
+            require(totalRegistered > 0, "At least one voter must register");
+            currentPhase = Phase.VOTING;
         }
+        else if (currentPhase == Phase.VOTING) {
+            require(block.timestamp >= votingEndTime, "Voting time not ended");
+            currentPhase = Phase.REVEAL;
+        }
+        else if (currentPhase == Phase.REVEAL) {
+            require(block.timestamp >= revealEndTime, "Reveal time not ended");
+            currentPhase = Phase.ENDED;
+        }
+        else {
+            revert("Election already ended");
+        }
+        
+        emit PhaseAdvanced(oldPhase, uint256(currentPhase), block.timestamp);
     }
     
-    /**
-     * @dev Emergency pause/unpause (admin only)
-     * @param _paused True to pause, false to unpause
-     */
-    function setPaused(bool _paused) external onlyAdmin {
-        paused = _paused;
-        emit ContractPaused(_paused);
-    }
-    
-    /**
-     * @dev Transfer admin privileges to a new address
-     * @param _newAdmin Address of the new admin
-     */
-    function transferAdmin(address _newAdmin) external onlyAdmin {
-        require(_newAdmin != address(0), "Invalid admin address");
-        emit AdminTransferred(admin, _newAdmin);
-        admin = _newAdmin;
-    }
-    
-    // ============ VOTER FUNCTIONS ============
-    
-    /**
-     * @dev Commit a vote (Voting phase only)
-     * @param _commitHash keccak256(candidateId + secret)
-     */
-    function commitVote(bytes32 _commitHash) 
-        external 
-        notPaused 
-        inPhase(Phase.VOTING) 
-    {
-        require(isRegistered[msg.sender], "Not registered");
-        require(commitments[msg.sender].hash == 0, "Already committed");
-        require(_commitHash != bytes32(0), "Invalid commit hash");
+    function resetElection() external onlyAdmin {
+        require(currentPhase == Phase.ENDED, "Can only reset after election ended");
         
-        commitments[msg.sender] = Commitment({
-            hash: _commitHash,
-            timestamp: block.timestamp,
-            revealed: false
-        });
+        for (uint256 i = 0; i < registeredVoters.length; i++) {
+            address voter = registeredVoters[i];
+            isRegistered[voter] = false;
+            delete votes[voter];
+            hasRevealed[voter] = false;
+        }
         
-        emit VoteCommitted(msg.sender, _commitHash);
-    }
-    
-    /**
-     * @dev Reveal a committed vote (Reveal phase only)
-     * @param _candidateId The candidate voted for
-     * @param _secret The secret used when committing
-     */
-    function revealVote(uint256 _candidateId, string memory _secret) 
-        external 
-        notPaused 
-        inPhase(Phase.REVEAL) 
-    {
-        require(isRegistered[msg.sender], "Not registered");
-        require(!commitments[msg.sender].revealed, "Already revealed");
-        require(candidateExists[_candidateId], "Invalid candidate");
+        delete registeredVoters;
+        totalRegistered = 0;
         
-        Commitment memory commit = commitments[msg.sender];
-        require(commit.hash != 0, "No commitment found");
+        for (uint256 i = 0; i < candidates.length; i++) {
+            candidates[i].voteCount = 0;
+        }
         
-        // Verify the secret matches the commitment hash
-        bytes32 expectedHash = keccak256(abi.encodePacked(_candidateId, _secret));
-        require(commit.hash == expectedHash, "Invalid secret");
+        uint256 registrationDuration = registrationEndTime - (votingEndTime - registrationEndTime);
+        uint256 votingDuration = votingEndTime - registrationEndTime;
+        uint256 revealDuration = revealEndTime - votingEndTime;
         
-        // Mark as revealed and count the vote
-        commitments[msg.sender].revealed = true;
-        hasRevealed[msg.sender] = true;
-        candidates[_candidateId].voteCount++;
+        registrationEndTime = block.timestamp + registrationDuration;
+        votingEndTime = registrationEndTime + votingDuration;
+        revealEndTime = votingEndTime + revealDuration;
         
-        emit VoteRevealed(msg.sender, _candidateId);
+        currentPhase = Phase.REGISTRATION;
+        
+        emit ElectionReset(block.timestamp);
     }
     
     // ============ VIEW FUNCTIONS ============
     
-    /**
-     * @dev Get all candidates with their campaign details and vote counts
-     * @return Array of all Candidate structs
-     */
     function getCandidates() external view returns (Candidate[] memory) {
         return candidates;
     }
     
-    /**
-     * @dev Get total number of candidates
-     * @return Candidate count
-     */
-    function getCandidateCount() external view returns (uint256) {
-        return candidates.length;
+    function getCandidate(uint256 _candidateId) external view returns (Candidate memory) {
+        require(_candidateId < candidates.length, "Candidate does not exist");
+        return candidates[_candidateId];
     }
     
-    /**
-     * @dev Check if a specific address is registered to vote
-     * @param _voter Address to check
-     * @return True if registered
-     */
+    function getPhaseInfo() external view returns (
+        uint256 phase,
+        uint256 registrationEnd,
+        uint256 votingEnd,
+        uint256 revealEnd
+    ) {
+        return (uint256(currentPhase), registrationEndTime, votingEndTime, revealEndTime);
+    }
+    
+    function getPhaseName() external view returns (string memory) {
+        if (currentPhase == Phase.REGISTRATION) return "Registration";
+        if (currentPhase == Phase.VOTING) return "Voting";
+        if (currentPhase == Phase.REVEAL) return "Reveal";
+        return "Ended";
+    }
+    
     function checkRegistration(address _voter) external view returns (bool) {
         return isRegistered[_voter];
     }
     
-    /**
-     * @dev Get current election phase information
-     * @return currentPhase Current phase
-     * @return registrationEnd End time of registration
-     * @return votingEnd End time of voting
-     * @return revealEnd End time of reveal
-     * @return isPaused Whether contract is paused
-     */
-    function getPhaseInfo() external view returns (
-        Phase currentPhase,
-        uint256 registrationEnd,
-        uint256 votingEnd,
-        uint256 revealEnd,
-        bool isPaused
-    ) {
-        return (phase, registrationEndTime, votingEndTime, revealEndTime, paused);
+    function hasCommitted(address _voter) external view returns (bool) {
+        return votes[_voter].commitHash != 0;
     }
     
-    /**
-     * @dev Get total number of revealed votes across all candidates
-     * @return Total vote count
-     */
-    function getTotalRevealedVotes() external view returns (uint256) {
+    function hasRevealedVote(address _voter) external view returns (bool) {
+        return hasRevealed[_voter];
+    }
+    
+    function getTotalVotesCast() external view returns (uint256) {
         uint256 total = 0;
         for (uint256 i = 0; i < candidates.length; i++) {
             total += candidates[i].voteCount;
@@ -341,30 +272,14 @@ contract Voting {
         return total;
     }
     
-    /**
-     * @dev Get total number of registered voters
-     * @return Registered voter count
-     */
-    function getRegisteredCount() external view returns (uint256) {
-        return registeredCount;
+    function getTotalRegistered() external view returns (uint256) {
+        return totalRegistered;
     }
     
-    /**
-     * @dev Check if a voter has committed a vote
-     * @param _voter Address to check
-     * @return True if committed
-     */
-    function hasCommitted(address _voter) external view returns (bool) {
-        return commitments[_voter].hash != 0;
+    function getCurrentTime() external view returns (uint256) {
+        return block.timestamp;
     }
     
-    /**
-     * @dev Get complete voting status for a voter
-     * @param _voter Address to check
-     * @return registered Registration status
-     * @return committed Commitment status
-     * @return revealed Reveal status
-     */
     function getVoterStatus(address _voter) external view returns (
         bool registered,
         bool committed,
@@ -372,47 +287,41 @@ contract Voting {
     ) {
         return (
             isRegistered[_voter],
-            commitments[_voter].hash != 0,
-            commitments[_voter].revealed
+            votes[_voter].commitHash != 0,
+            hasRevealed[_voter]
         );
     }
     
-    /**
-     * @dev Get detailed information for a specific candidate
-     * @param _candidateId Candidate ID
-     * @return name Candidate name
-     * @return slogan Campaign slogan
-     * @return manifesto Detailed manifesto
-     * @return promises Key promises
-     * @return color UI color code
-     * @return voteCount Votes received
-     */
-    function getCandidateDetails(uint256 _candidateId) external view returns (
-        string memory name,
-        string memory slogan,
-        string memory manifesto,
-        string memory promises,
-        string memory color,
-        uint256 voteCount
-    ) {
-        require(candidateExists[_candidateId], "Candidate does not exist");
-        Candidate memory c = candidates[_candidateId];
-        return (c.name, c.slogan, c.manifesto, c.promises, c.color, c.voteCount);
+    function canAdvancePhase() external view returns (bool canAdvance, string memory reason) {
+        if (currentPhase == Phase.REGISTRATION) {
+            if (block.timestamp < registrationEndTime) {
+                return (false, "Registration time not ended");
+            }
+            if (totalRegistered == 0) {
+                return (false, "No voters registered");
+            }
+            return (true, "Ready to advance to Voting");
+        }
+        else if (currentPhase == Phase.VOTING) {
+            if (block.timestamp < votingEndTime) {
+                return (false, "Voting time not ended");
+            }
+            return (true, "Ready to advance to Reveal");
+        }
+        else if (currentPhase == Phase.REVEAL) {
+            if (block.timestamp < revealEndTime) {
+                return (false, "Reveal time not ended");
+            }
+            return (true, "Ready to advance to Ended");
+        }
+        return (false, "Election already ended");
     }
     
-    /**
-     * @dev Check if contract is still active (not ended and not paused)
-     * @return True if active
-     */
-    function isContractActive() external view returns (bool) {
-        return phase != Phase.ENDED && !paused;
+    function getRegisteredVoters() external view onlyAdmin returns (address[] memory) {
+        return registeredVoters;
     }
     
-    /**
-     * @dev Get current time (helper for frontend)
-     * @return Current block timestamp
-     */
-    function getCurrentTime() external view returns (uint256) {
-        return block.timestamp;
+    function getCandidateCount() external view returns (uint256) {
+        return candidates.length;
     }
 }
