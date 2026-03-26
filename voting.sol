@@ -5,6 +5,8 @@ pragma solidity ^0.8.19;
  * @title UniVote - Student Government Election System
  * @author Your Name
  * @notice A decentralized voting system for university student representative elections
+ * @dev Features: 6 candidates, commit-reveal secret voting, 3-phase election process
+ * @dev IMPORTANT: Registration phase will NOT advance until at least 1 student registers
  */
 contract UniVote {
     // ============ DATA STRUCTURES ============
@@ -111,9 +113,6 @@ contract UniVote {
     
     // ============ HELPER FUNCTIONS ============
     
-    /**
-     * @dev Get error message based on current phase
-     */
     function getPhaseErrorMessage() private view returns (string memory) {
         if (currentPhase == Phase.REGISTRATION) return "Must be in Registration phase";
         if (currentPhase == Phase.VOTING) return "Must be in Voting phase";
@@ -172,12 +171,17 @@ contract UniVote {
     
     // ============ ADMIN FUNCTIONS ============
     
+    /**
+     * @dev Advance to the next election phase (admin only)
+     * @notice Registration phase will NOT advance until at least 1 person registers
+     */
     function advancePhase() external onlyAdmin {
         uint256 oldPhase = uint256(currentPhase);
         
         if (currentPhase == Phase.REGISTRATION) {
+            // REQUIREMENT: Time must have passed AND at least 1 voter must be registered
             require(block.timestamp >= registrationEndTime, "Registration time not ended");
-            require(totalRegistered > 0, "At least one voter must register");
+            require(totalRegistered > 0, "Cannot advance: No voters registered. At least one student must register first.");
             currentPhase = Phase.VOTING;
         }
         else if (currentPhase == Phase.VOTING) {
@@ -195,6 +199,9 @@ contract UniVote {
         emit PhaseAdvanced(oldPhase, uint256(currentPhase), block.timestamp);
     }
     
+    /**
+     * @dev Reset the election for a new cycle (admin only)
+     */
     function resetElection() external onlyAdmin {
         require(currentPhase == Phase.ENDED, "Can only reset after election ended");
         
@@ -298,7 +305,7 @@ contract UniVote {
                 return (false, "Registration time not ended");
             }
             if (totalRegistered == 0) {
-                return (false, "No voters registered");
+                return (false, "Cannot advance: No voters registered. At least one student must register first.");
             }
             return (true, "Ready to advance to Voting");
         }
