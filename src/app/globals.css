@@ -1,0 +1,114 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply antialiased;
+  }
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Accessible focus for buttons/inputs without relying on default browser styles */
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.55);
+    border-color: rgba(167, 139, 250, 0.7);
+  }
+
+  /* Better rendering defaults for text */
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-gray-800;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-purple-600 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-purple-500;
+}
+
+/* Glass morphism effect */
+.glass {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Subtle animated background grid (can be used anywhere as a utility-like class) */
+.bg-grid-animated {
+  background-image: linear-gradient(to right, rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-size: 42px 42px;
+}
+
+@layer components {
+  /* Strong, visible card system (makes UI feel like an app, not plain HTML) */
+  .card {
+    @apply rounded-2xl border border-white/15 bg-white/10 backdrop-blur-xl;
+    box-shadow:
+      0 18px 60px -30px rgba(0, 0, 0, 0.9),
+      0 1px 0 rgba(255, 255, 255, 0.08) inset;
+  }
+
+  .card-hover {
+    @apply transition-transform duration-200 ease-out hover:-translate-y-1;
+  }
+
+  .card-header {
+    @apply px-6 py-5 border-b border-white/10 bg-gradient-to-r from-white/10 to-transparent;
+  }
+
+  .card-body {
+    @apply p-6;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold border;
+  }
+
+  .chip-ok {
+    @apply chip bg-emerald-500/15 border-emerald-500/25 text-emerald-200;
+  }
+
+  .chip-warn {
+    @apply chip bg-yellow-500/15 border-yellow-500/25 text-yellow-200;
+  }
+
+  .chip-info {
+    @apply chip bg-blue-500/15 border-blue-500/25 text-blue-200;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 font-semibold text-white;
+    @apply bg-gradient-to-r from-purple-500 to-pink-500 hover:opacity-90 active:opacity-95;
+    @apply transition-all disabled:opacity-60 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 font-semibold text-gray-100;
+    @apply bg-white/10 hover:bg-white/15 border border-white/10;
+    @apply transition-all disabled:opacity-60 disabled:cursor-not-allowed;
+  }
+}
